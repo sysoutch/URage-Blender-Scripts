@@ -84,21 +84,6 @@ def export_model(output_path):
     raise RuntimeError(f"Unsupported output format: {output_path}")
 
 
-def rounded_float(value):
-    return round(float(value), 6)
-
-
-def vertex_uv_material_signature(vertex, uv_layers):
-    loop_signatures = []
-    for loop in vertex.link_loops:
-        uv_values = tuple(
-            (rounded_float(loop[layer].uv.x), rounded_float(loop[layer].uv.y))
-            for layer in uv_layers
-        )
-        loop_signatures.append((loop.face.material_index, uv_values))
-    return tuple(sorted(loop_signatures))
-
-
 def merge_selected_vertices(merge_distance):
     edit_object = bpy.context.edit_object
     if not edit_object or edit_object.type != "MESH":
@@ -112,14 +97,7 @@ def merge_selected_vertices(merge_distance):
         return 0
 
     before_count = len(bm.verts)
-    uv_layers = list(bm.loops.layers.uv)
-    vertex_groups = {}
-    for vertex in vertices:
-        signature = vertex_uv_material_signature(vertex, uv_layers)
-        vertex_groups.setdefault(signature, []).append(vertex)
-    for group_vertices in vertex_groups.values():
-        if len(group_vertices) > 1:
-            bmesh.ops.remove_doubles(bm, verts=group_vertices, dist=merge_distance)
+    bmesh.ops.remove_doubles(bm, verts=vertices, dist=merge_distance)
     bmesh.update_edit_mesh(mesh, loop_triangles=False, destructive=True)
     return max(0, before_count - len(bm.verts))
 
@@ -169,6 +147,7 @@ def prepare_merged_mesh(merge_distance):
         active_object = bpy.context.view_layer.objects.active
 
     bpy.ops.object.mode_set(mode="EDIT")
+    bpy.ops.mesh.select_mode(type="VERT")
     bpy.ops.mesh.select_all(action="SELECT")
     merged_vertex_count = merge_selected_vertices(merge_distance)
     cleared_sharp_edge_count = clear_sharp_edges_from_selected_faces()
