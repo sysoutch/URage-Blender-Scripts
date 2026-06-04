@@ -1,9 +1,12 @@
+import json
 import os
 import sys
-import json
 import bpy
 
 IMAGE_EXTENSIONS = {".png", ".jpg", ".jpeg", ".webp", ".bmp", ".tif", ".tiff", ".gif"}
+URAGE_PATH_KEY = "urage_source_filepath"
+URAGE_IMPORT_PATH_KEY = "urage_import_filepath"
+URAGE_KIND_KEY = "urage_asset_kind"
 
 
 def coerce_arg_value(value, default_value, arg_type):
@@ -79,7 +82,20 @@ def load_image_size(image):
     return max(1, int(width or 1)), max(1, int(height or 1))
 
 
-def create_image_plane(filepath, name, location=(0, 0, 0)):
+def tag_urage_source(objects, source_filepath, kind="model", import_filepath=""):
+    source_path = os.path.abspath(source_filepath)
+    import_path = os.path.abspath(import_filepath or source_filepath)
+    extension = os.path.splitext(source_path)[1].lower()
+    for obj in objects:
+        if not obj:
+            continue
+        obj[URAGE_PATH_KEY] = source_path
+        obj[URAGE_IMPORT_PATH_KEY] = import_path
+        obj[URAGE_KIND_KEY] = kind
+        obj["urage_source_extension"] = extension
+
+
+def create_image_plane(filepath, name, location=(0, 0, 0), source_filepath=""):
     image = bpy.data.images.load(filepath, check_existing=True)
     width, height = load_image_size(image)
     aspect = width / height
@@ -108,6 +124,7 @@ def create_image_plane(filepath, name, location=(0, 0, 0)):
     plane.data.materials.append(material)
     bpy.context.view_layer.objects.active = plane
     plane.select_set(True)
+    tag_urage_source([plane], source_filepath or filepath, "image", filepath)
     return plane
 
 
@@ -179,6 +196,7 @@ def offset_objects(objects, location):
 
 def import_asset(asset, index, total):
     filepath = str(asset.get("filepath") or "").strip()
+    source_filepath = str(asset.get("source_filepath") or asset.get("sourceFilepath") or filepath).strip()
     mode = str(asset.get("mode") or "model").strip().lower()
     name = safe_name(asset.get("name"), os.path.basename(filepath))
     if not filepath or not os.path.isfile(filepath):
@@ -192,9 +210,10 @@ def import_asset(asset, index, total):
     extension = os.path.splitext(filepath)[1].lower()
 
     if mode == "image-plane" or extension in IMAGE_EXTENSIONS:
-        return [create_image_plane(filepath, name, location)]
+        return [create_image_plane(filepath, name, location, source_filepath)]
 
     imported = import_model(filepath)
+    tag_urage_source(imported, source_filepath, "model", filepath)
     offset_objects(imported, location)
     return imported
 
@@ -202,6 +221,7 @@ def import_asset(asset, index, total):
 ensure_object_mode()
 args = sys.argv[sys.argv.index("--") + 1:] if "--" in sys.argv else []
 filepath = get_arg_value(args, "filepath", "", str)
+source_filepath = get_arg_value(args, "source_filepath", filepath, str)
 filelist = get_arg_value(args, "filelist", "", str)
 mode = get_arg_value(args, "mode", "model", str).strip().lower()
 name = get_arg_value(args, "name", os.path.basename(filepath), str)
@@ -221,10 +241,11 @@ if batch_assets:
     add_image_view_helpers(active_object)
 else:
     if mode == "image-plane" or extension in IMAGE_EXTENSIONS:
-        active_object = create_image_plane(filepath, name)
+        active_object = create_image_plane(filepath, name, source_filepath=source_filepath)
         add_image_view_helpers(active_object)
     else:
-        import_model(filepath)
+        imported_objects = import_model(filepath)
+        tag_urage_source(imported_objects, source_filepath, "model", filepath)
         for obj in bpy.context.selected_objects:
             bpy.context.view_layer.objects.active = obj
         update_model_materials()
