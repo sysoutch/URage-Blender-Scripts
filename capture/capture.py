@@ -96,6 +96,55 @@ def get_mesh_objects():
     return [o for o in bpy.context.scene.objects if o.type == "MESH"]
 
 
+def parse_background_color(value):
+    raw = str(value or "").strip()
+    if raw.startswith("#") and len(raw) == 7:
+        try:
+            return tuple(int(raw[index:index + 2], 16) / 255.0 for index in (1, 3, 5))
+        except ValueError:
+            pass
+    try:
+        components = [float(component.strip()) for component in raw.split(",")]
+    except ValueError:
+        components = []
+    if len(components) != 3:
+        return (0.0, 0.0, 0.0)
+    if max(components) > 1.0:
+        components = [component / 255.0 for component in components]
+    return tuple(max(0.0, min(1.0, component)) for component in components)
+
+
+def ensure_world(scene):
+    world = scene.world
+    if not world:
+        world = bpy.data.worlds.new("World")
+        scene.world = world
+    world.use_nodes = True
+    return world
+
+
+def configure_solid_background(scene, color):
+    world = ensure_world(scene)
+    background = world.node_tree.nodes.get("Background")
+    if background:
+        background.inputs[0].default_value = (*color, 1)
+        background.inputs[1].default_value = 1.0
+
+
+def configure_skybox(scene):
+    world = ensure_world(scene)
+    nodes = world.node_tree.nodes
+    links = world.node_tree.links
+    nodes.clear()
+    output = nodes.new(type="ShaderNodeOutputWorld")
+    background = nodes.new(type="ShaderNodeBackground")
+    sky = nodes.new(type="ShaderNodeTexSky")
+    sky.sky_type = "NISHITA"
+    background.inputs["Strength"].default_value = 0.35
+    links.new(sky.outputs["Color"], background.inputs["Color"])
+    links.new(background.outputs["Background"], output.inputs["Surface"])
+
+
 def select_object(name=None):
     bpy.ops.object.select_all(action="DESELECT")
     if name:
@@ -117,29 +166,36 @@ def select_object(name=None):
 
 def setup_render(args):
     scene = bpy.context.scene
-    scene.render.engine = args.engine
+    render_engine = args.engine
+    if args.background == "skybox" and render_engine == "BLENDER_WORKBENCH":
+        render_engine = "BLENDER_EEVEE_NEXT"
+        print("Skybox capture uses Eevee Next because Workbench cannot render world sky shaders.")
+    scene.render.engine = render_engine
     scene.render.resolution_x = args.width
     scene.render.resolution_y = args.height
     scene.render.resolution_percentage = 100
     scene.render.image_settings.file_format = "PNG"
     scene.render.image_settings.color_mode = "RGBA"
     scene.render.image_settings.compression = max(0, min(100, 100 - args.quality))
-    if args.engine == "BLENDER_WORKBENCH":
+    background_color = parse_background_color(args.bg_color)
+    if render_engine == "BLENDER_WORKBENCH":
         shading = scene.display.shading
         shading.show_shadows = args.shadows == "on"
         shading.show_cavity = args.shadows == "on"
+        shading.background_type = "VIEWPORT"
+        shading.background_color = background_color
         if args.shading == "TEXTURE":
             shading.light = "FLAT"
             shading.color_type = "TEXTURE"
         elif args.shading == "MATERIAL":
             shading.light = "STUDIO"
             shading.color_type = "MATERIAL"
-    elif args.engine == "BLENDER_EEVEE_NEXT":
+    elif render_engine == "BLENDER_EEVEE_NEXT":
         if hasattr(scene, "eevee") and hasattr(scene.eevee, "use_shadows"):
             scene.eevee.use_shadows = args.shadows == "on"
         for light in bpy.data.lights:
             light.use_shadow = args.shadows == "on"
-    elif args.engine == "CYCLES":
+    elif render_engine == "CYCLES":
         for light in bpy.data.lights:
             light.use_shadow = args.shadows == "on"
             if hasattr(light, "cycles"):
@@ -148,17 +204,10 @@ def setup_render(args):
     if args.background == "transparent":
         scene.render.film_transparent = True
     elif args.background == "solidcolor":
-        r, g, b = [float(x) for x in args.bg_color.split(",")]
-        world = scene.world
-        if not world:
-            world = bpy.data.worlds.new("World")
-            scene.world = world
-        world.use_nodes = True
-        bg = world.node_tree.nodes.get("Background")
-        if bg:
-            bg.inputs[0].default_value = (r, g, b, 1)
+        configure_solid_background(scene, background_color)
     elif args.background == "skybox":
-        scene.render.film_transparent = False
+        configure_skybox(scene)
+    return render_engine
 
 
 def get_scene_mesh_center_and_size():
@@ -317,8 +366,8 @@ def main():
     args = parse_args()
     load_scene_from_args(args)
     obj = select_object(args.select)
-    setup_render(args)
-    if args.engine != "BLENDER_WORKBENCH":
+    render_engine = setup_render(args)
+    if render_engine != "BLENDER_WORKBENCH":
         ensure_light()
     cam = setup_camera(args)
     render_still(args.output)
