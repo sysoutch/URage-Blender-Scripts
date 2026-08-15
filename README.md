@@ -48,16 +48,3 @@ Example:
 ```
 
 Subdivision level `0` displaces existing vertices only. Levels `1-8` apply either Subdivision Surface or Multiresolution and convert the result to real vertices, edges, and faces before displacement. The workflow can weld duplicates both before and after this topology pass. Weld cleanup does not undo ordinary subdivision topology. Start with `0` or `1` on dense generated models.
-
-## Decimate To Face Count
-
-`decimate/decimateToFaces.py` imports an FBX, GLB, or glTF model and proportionally reduces its mesh objects toward a total face-count target.
-
-```powershell
-& $env:BLENDER_EXECUTABLE_PATH --background --python decimate/decimateToFaces.py -- `
-  --filepath=C:\models\source.glb `
-  --output_path=C:\models\source-decimated.glb `
-  --target_faces=50000
-```
-
-The output format is selected from `--output_path`. Supported outputs are FBX, GLB, and separate glTF.

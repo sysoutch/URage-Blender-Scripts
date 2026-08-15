@@ -28,15 +28,13 @@ def import_model(filepath):
 def get_mesh_objects():
     return [obj for obj in bpy.context.scene.objects if obj.type == "MESH"]
 
-def center_and_scale_objects(objects):
-    if not objects:
-        return
+def get_world_bounds(objects):
     bbox_points = []
     for obj in objects:
         for corner in obj.bound_box:
             bbox_points.append(obj.matrix_world @ Vector(corner))
     if not bbox_points:
-        return
+        return Vector((0.0, 0.0, 0.0)), 1.0
     min_corner = Vector((
         min(point.x for point in bbox_points),
         min(point.y for point in bbox_points),
@@ -47,28 +45,41 @@ def center_and_scale_objects(objects):
         max(point.y for point in bbox_points),
         max(point.z for point in bbox_points)
     ))
-    center = (min_corner + max_corner) * 0.5
+    return (min_corner + max_corner) * 0.5, max(max_corner.x - min_corner.x, max_corner.y - min_corner.y, max_corner.z - min_corner.z, 0.01)
+
+def center_and_scale_objects(objects):
+    if not objects:
+        return
+    # Flatten the import hierarchy before measuring. Sketchfab glTF files often
+    # use several rotated parent nodes; preview framing operates on meshes and
+    # must not mix their world-space bounds with local-space translation.
+    for obj in objects:
+        world_matrix = obj.matrix_world.copy()
+        obj.parent = None
+        obj.matrix_world = world_matrix
+    center, size = get_world_bounds(objects)
     for obj in objects:
         obj.location -= center
-    size = max(max_corner.x - min_corner.x, max_corner.y - min_corner.y, max_corner.z - min_corner.z)
-    if size <= 0:
-        return
-    scale = 1.8 / size
+    scale = 1.8 / max(size, 0.01)
     for obj in objects:
         obj.scale = obj.scale * scale
+    bpy.context.view_layer.update()
+    return get_world_bounds(objects)
 
 def look_at(target, camera_obj):
     direction = target - camera_obj.location
     rotation = direction.to_track_quat("-Z", "Y")
     camera_obj.rotation_euler = rotation.to_euler()
 
-def setup_camera_and_lights():
+def setup_camera_and_lights(target, max_size):
     scene = bpy.context.scene
+    distance = max(1.0, max_size * 2.45)
     camera_data = bpy.data.cameras.new("PreviewCamera")
     camera_obj = bpy.data.objects.new("PreviewCamera", camera_data)
     scene.collection.objects.link(camera_obj)
-    camera_obj.location = Vector((2.6, -2.6, 1.65))
-    look_at(Vector((0.0, 0.0, 0.0)), camera_obj)
+    camera_obj.location = target + Vector((distance * 0.78, -distance * 0.78, distance * 0.52))
+    camera_obj.data.lens = 52
+    look_at(target, camera_obj)
     scene.camera = camera_obj
 
     key_data = bpy.data.lights.new("KeyLight", type="AREA")
@@ -76,16 +87,16 @@ def setup_camera_and_lights():
     key_data.size = 2.2
     key_obj = bpy.data.objects.new("KeyLight", key_data)
     scene.collection.objects.link(key_obj)
-    key_obj.location = Vector((3.0, -2.0, 2.5))
-    look_at(Vector((0.0, 0.0, 0.0)), key_obj)
+    key_obj.location = target + Vector((distance * 0.9, -distance * 0.62, distance * 0.95))
+    look_at(target, key_obj)
 
     fill_data = bpy.data.lights.new("FillLight", type="AREA")
     fill_data.energy = 350
     fill_data.size = 3.0
     fill_obj = bpy.data.objects.new("FillLight", fill_data)
     scene.collection.objects.link(fill_obj)
-    fill_obj.location = Vector((-2.0, 2.0, 1.2))
-    look_at(Vector((0.0, 0.0, 0.0)), fill_obj)
+    fill_obj.location = target + Vector((-distance * 0.72, distance * 0.62, distance * 0.45))
+    look_at(target, fill_obj)
     return camera_obj
 
 def setup_world():
@@ -118,12 +129,11 @@ def render_preview(output_path):
     scene.render.filepath = output_path
     bpy.ops.render.render(write_still=True)
 
-def render_turntable_frames(output_dir, frame_count, camera_obj):
+def render_turntable_frames(output_dir, frame_count, camera_obj, orbit_center):
     scene = bpy.context.scene
     configure_render()
     os.makedirs(output_dir, exist_ok=True)
     base_location = camera_obj.location.copy()
-    orbit_center = Vector((0.0, 0.0, 0.0))
     base_angle = atan2(base_location.y, base_location.x)
     orbit_radius = sqrt((base_location.x * base_location.x) + (base_location.y * base_location.y))
     camera_height = base_location.z
@@ -165,11 +175,11 @@ def main():
     mesh_objects = get_mesh_objects()
     if not mesh_objects:
         raise RuntimeError("No mesh objects found after import.")
-    center_and_scale_objects(mesh_objects)
-    camera_obj = setup_camera_and_lights()
+    target, max_size = center_and_scale_objects(mesh_objects)
+    camera_obj = setup_camera_and_lights(target, max_size)
     setup_world()
     if output_dir and frame_count > 1:
-        render_turntable_frames(output_dir, frame_count, camera_obj)
+        render_turntable_frames(output_dir, frame_count, camera_obj, target)
         print(f"Rendered model turntable frames to: {output_dir}")
         return
     os.makedirs(os.path.dirname(output_path), exist_ok=True)

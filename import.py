@@ -156,7 +156,7 @@ def import_model(filepath):
 def add_image_view_helpers(target):
     bpy.ops.object.light_add(type="AREA", location=(0, -3, 4))
     light = bpy.context.object
-    light.name = "URage Studio Key Light"
+    light.name = "URage NOW Key Light"
     light.data.energy = 420
     light.data.size = 5
 

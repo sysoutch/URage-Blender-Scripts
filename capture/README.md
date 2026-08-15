@@ -128,7 +128,7 @@ magick -delay 4 -loop 0 "C:\files\gif_frames\frame_*.png" "C:\files\spin.gif"
 | `--frames` | Number of rendered frames |
 | `--gif-folder` | Output frame folder |
 | `--background` | transparent / solidcolor / skybox |
-| `--bg-color` | Solid background as `#RRGGBB`, normalized RGB, or 0-255 RGB |
+| `--bg-color` | RGB values for solidcolor |
 
 ---
 
